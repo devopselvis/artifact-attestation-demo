@@ -102,25 +102,52 @@ jobs:
       env:
         GH_TOKEN: ${{ github.token }}
         
-    - name: Get detailed attestation information
+    - name: Validate attestation claims
       run: |
-        echo "📋 Getting detailed attestation information..."
+        echo "🔍 Validating specific attestation claims..."
         ARTIFACT_FILE="${{ needs.build-and-attest.outputs.artifact-name }}"
         
-        # Get detailed JSON output
-        gh attestation verify "$ARTIFACT_FILE" \
-          --repo "${{ github.repository }}" \
-          --format json > attestation-details.json
-          
-        echo "🔍 Attestation Summary:"
-        cat attestation-details.json | jq -r '
-          .[0].verificationResult.statement.predicate.buildDefinition as $build |
-          "Repository: " + $build.externalParameters.workflow.repository +
-          "\nWorkflow: " + $build.externalParameters.workflow.path +
-          "\nCommit: " + $build.externalParameters.workflow.ref +
-          "\nRunner Environment: " + $build.internalParameters.github.runner_environment +
-          "\nBuild Started: " + ($build.runDetails.metadata.startedOn // "N/A") +
-          "\nBuild Finished: " + ($build.runDetails.metadata.finishedOn // "N/A")'
+        # Extract key information from attestation
+        REPO_URL_FROM_ATTESTATION=$(cat attestation-details.json | jq -r '.[0].verificationResult.statement.predicate.buildDefinition.externalParameters.workflow.repository')
+        WORKFLOW_FROM_ATTESTATION=$(cat attestation-details.json | jq -r '.[0].verificationResult.statement.predicate.buildDefinition.externalParameters.workflow.path')
+        REF_FROM_ATTESTATION=$(cat attestation-details.json | jq -r '.[0].verificationResult.statement.predicate.buildDefinition.externalParameters.workflow.ref')
+        
+        # Extract repository name from URL (remove https://github.com/ prefix)
+        REPO_FROM_ATTESTATION="${REPO_URL_FROM_ATTESTATION#https://github.com/}"
+        
+        echo "Validating repository: $REPO_FROM_ATTESTATION (from $REPO_URL_FROM_ATTESTATION)"
+        echo "Validating workflow: $WORKFLOW_FROM_ATTESTATION"
+        echo "Validating ref: $REF_FROM_ATTESTATION"
+        
+        # Validate repository matches
+        if [[ "$REPO_FROM_ATTESTATION" == "${{ github.repository }}" ]]; then
+          echo "✅ Repository validation PASSED"
+        else
+          echo "❌ Repository validation FAILED: Expected ${{ github.repository }}, got $REPO_FROM_ATTESTATION"
+          exit 1
+        fi
+        
+        # Validate workflow path
+        if [[ "$WORKFLOW_FROM_ATTESTATION" == *"build-with-attestation.yml"* ]]; then
+          echo "✅ Workflow validation PASSED"
+        else
+          echo "❌ Workflow validation FAILED: Unexpected workflow $WORKFLOW_FROM_ATTESTATION"
+          exit 1
+        fi
+        
+        # Validate ref matches current context
+        EXPECTED_REF="refs/heads/${{ github.ref_name }}"
+        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+          EXPECTED_REF="refs/pull/${{ github.event.number }}/merge"
+        fi
+        
+        echo "Expected ref: $EXPECTED_REF"
+        if [[ "$REF_FROM_ATTESTATION" == "$EXPECTED_REF" ]] || [[ "$REF_FROM_ATTESTATION" == "${{ github.ref }}" ]]; then
+          echo "✅ Ref validation PASSED"
+        else
+          echo "⚠️  Ref validation WARNING: Expected $EXPECTED_REF, got $REF_FROM_ATTESTATION"
+          # Don't fail on ref mismatch as it can vary in different contexts
+        fi
       env:
         GH_TOKEN: ${{ github.token }}
         
