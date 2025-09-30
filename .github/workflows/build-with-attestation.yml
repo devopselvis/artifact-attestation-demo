@@ -114,7 +114,7 @@ jobs:
           
         echo "🔍 Attestation Summary:"
         cat attestation-details.json | jq -r '
-          .[].verificationResult' summary.json.statement.predicate.buildDefinition as $build |
+          .[0].verificationResult.statement.predicate.buildDefinition as $build |
           "Repository: " + $build.externalParameters.workflow.repository +
           "\nWorkflow: " + $build.externalParameters.workflow.path +
           "\nCommit: " + $build.externalParameters.workflow.ref +
