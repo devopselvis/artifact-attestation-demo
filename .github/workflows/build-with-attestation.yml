@@ -150,7 +150,7 @@ jobs:
         fi
         
         # Validate workflow path
-        if [[ "$WORKFLOW_FROM_ATTESTATION" == *"build-and-verify-attestation.yml"* ]]; then
+        if [[ "$WORKFLOW_FROM_ATTESTATION" == *"build-with-attestation.yml"* ]]; then
           echo "✅ Workflow validation PASSED"
         else
           echo "❌ Workflow validation FAILED: Unexpected workflow $WORKFLOW_FROM_ATTESTATION"
