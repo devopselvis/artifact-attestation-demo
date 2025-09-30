@@ -1,0 +1,104 @@
+name: Demo - Tampered Artifact Detection
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+  actions: read
+
+jobs:
+  build-and-attest:
+    runs-on: ubuntu-latest
+    outputs:
+      artifact-name: ${{ steps.set-artifact-name.outputs.artifact-name }}
+      
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        
+    - name: Build package
+      run: npm pack
+      
+    - name: Set artifact name
+      id: set-artifact-name
+      run: |
+        ARTIFACT_FILE=$(ls *.tgz | head -1)
+        echo "artifact-name=$ARTIFACT_FILE" >> $GITHUB_OUTPUT
+        echo "📦 Original artifact: $ARTIFACT_FILE"
+        
+    - name: Generate attestation for original artifact
+      uses: actions/attest-build-provenance@v1
+      with:
+        subject-path: '*.tgz'
+        
+    - name: Upload original artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: original-artifact
+        path: '*.tgz'
+
+  demonstrate-tampering:
+    runs-on: ubuntu-latest
+    needs: build-and-attest
+    
+    steps:
+    - name: Download original artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: original-artifact
+        
+    - name: Show original artifact verification (PASS)
+      run: |
+        echo "🔐 Verifying ORIGINAL artifact (should PASS)..."
+        ARTIFACT_FILE="${{ needs.build-and-attest.outputs.artifact-name }}"
+        
+        if gh attestation verify "$ARTIFACT_FILE" --repo "${{ github.repository }}"; then
+          echo "✅ Original artifact verification PASSED (as expected)"
+        else
+          echo "❌ Original artifact verification FAILED (unexpected!)"
+          exit 1
+        fi
+      env:
+        GH_TOKEN: ${{ github.token }}
+        
+    - name: Tamper with the artifact
+      run: |
+        echo "🔨 Tampering with artifact to demonstrate failure..."
+        ARTIFACT_FILE="${{ needs.build-and-attest.outputs.artifact-name }}"
+        
+        # Show original file info
+        echo "📋 Original file info:"
+        ls -la "$ARTIFACT_FILE"
+        sha256sum "$ARTIFACT_FILE"
+        
+        # Method 1: Append malicious content
+        echo "💀 MALICIOUS_CONTENT_INJECTED" >> "$ARTIFACT_FILE"
+        
+        # Show tampered file info
+        echo "📋 Tampered file info:"
+        ls -la "$ARTIFACT_FILE"
+        sha256sum "$ARTIFACT_FILE"
+        
+    - name: Verify tampered artifact (FAIL)
+      run: |
+        echo "🔐 Verifying TAMPERED artifact (should FAIL)..."
+        ARTIFACT_FILE="${{ needs.build-and-attest.outputs.artifact-name }}"
+        
+        if gh attestation verify "$ARTIFACT_FILE" --repo "${{ github.repository }}"; then
+          echo "❌ SECURITY ALERT: Tampered artifact verification PASSED (this should not happen!)"
+          exit 1
+        else
+          echo "✅ Tampered artifact verification FAILED (as expected - tampering detected!)"
+          echo "🛡️  Attestation successfully detected artifact tampering!"
+        fi
+      env:
+        GH_TOKEN: ${{ github.token }}
