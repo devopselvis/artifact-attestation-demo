@@ -1,4 +1,4 @@
-name: Build and Attest
+name: Build, Attest, and Verify
 
 on:
   push:
@@ -7,16 +7,19 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
-# Required for attestations
+# Required permissions for attestations
 permissions:
   contents: read
   id-token: write
   attestations: write
+  actions: read
 
 jobs:
   build-and-attest:
     runs-on: ubuntu-latest
-    
+    outputs:
+      artifact-name: ${{ steps.set-artifact-name.outputs.artifact-name }}
+      
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -36,25 +39,151 @@ jobs:
     - name: Build package
       run: npm pack
       
+    - name: Set artifact name output
+      id: set-artifact-name
+      run: |
+        ARTIFACT_FILE=$(ls *.tgz | head -1)
+        echo "artifact-name=$ARTIFACT_FILE" >> $GITHUB_OUTPUT
+        echo "📦 Created artifact: $ARTIFACT_FILE"
+        
     - name: List built artifacts
-      run: ls -la *.tgz
-      
+      run: |
+        echo "📋 Built artifacts:"
+        ls -la *.tgz
+        
     - name: Generate attestation
-      uses: actions/attest-build-provenance@v1
+      uses: actions/attest-build-provenance@v3.0.0
       with:
         subject-path: '*.tgz'
         
-    - name: Upload artifact
+    - name: Upload artifact with attestation
       uses: actions/upload-artifact@v4
       with:
-        name: npm-package
+        name: npm-package-with-attestation
         path: '*.tgz'
+        retention-days: 30
+
+  verify-attestation:
+    runs-on: ubuntu-latest
+    needs: build-and-attest
+    if: always() && needs.build-and-attest.result == 'success'
+    
+    steps:
+    - name: Download artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: npm-package-with-attestation
+        path: ./downloaded-artifacts
         
-    # Optional: Push to registry with attestation
-    #- name: Publish to npm (if main branch)
-    #  if: github.ref == 'refs/heads/main'
-    #  run: |
-    #    echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
-    #    npm publish *.tgz
-    #  env:
-    #    NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    - name: List downloaded artifacts
+      run: |
+        echo "📋 Downloaded artifacts:"
+        ls -la ./downloaded-artifacts/
+        
+    - name: Move artifacts to current directory
+      run: |
+        mv ./downloaded-artifacts/*.tgz ./
+        echo "📦 Artifacts in current directory:"
+        ls -la *.tgz
+        
+    - name: Verify attestation
+      run: |
+        echo "🔐 Verifying attestation for artifact..."
+        ARTIFACT_FILE="${{ needs.build-and-attest.outputs.artifact-name }}"
+        echo "Verifying: $ARTIFACT_FILE"
+        
+        # Verify the attestation
+        if gh attestation verify "$ARTIFACT_FILE" --repo "${{ github.repository }}"; then
+          echo "✅ Attestation verification PASSED!"
+        else
+          echo "❌ Attestation verification FAILED!"
+          exit 1
+        fi
+      env:
+        GH_TOKEN: ${{ github.token }}
+        
+    - name: Get detailed attestation information
+      run: |
+        echo "📋 Getting detailed attestation information..."
+        ARTIFACT_FILE="${{ needs.build-and-attest.outputs.artifact-name }}"
+        
+        # Get detailed JSON output
+        gh attestation verify "$ARTIFACT_FILE" \
+          --repo "${{ github.repository }}" \
+          --format json > attestation-details.json
+          
+        echo "🔍 Attestation Summary:"
+        cat attestation-details.json | jq -r '
+          .verificationResult.statement.predicate.buildDefinition as $build |
+          "Repository: " + $build.externalParameters.workflow.repository +
+          "\nWorkflow: " + $build.externalParameters.workflow.path +
+          "\nCommit: " + $build.externalParameters.workflow.ref +
+          "\nRunner Environment: " + $build.internalParameters.github.runner_environment +
+          "\nBuild Started: " + ($build.runDetails.metadata.startedOn // "N/A") +
+          "\nBuild Finished: " + ($build.runDetails.metadata.finishedOn // "N/A")'
+      env:
+        GH_TOKEN: ${{ github.token }}
+        
+    - name: Validate attestation claims
+      run: |
+        echo "🔍 Validating specific attestation claims..."
+        ARTIFACT_FILE="${{ needs.build-and-attest.outputs.artifact-name }}"
+        
+        # Extract key information from attestation
+        REPO_FROM_ATTESTATION=$(cat attestation-details.json | jq -r '.verificationResult.statement.predicate.buildDefinition.externalParameters.workflow.repository')
+        WORKFLOW_FROM_ATTESTATION=$(cat attestation-details.json | jq -r '.verificationResult.statement.predicate.buildDefinition.externalParameters.workflow.path')
+        REF_FROM_ATTESTATION=$(cat attestation-details.json | jq -r '.verificationResult.statement.predicate.buildDefinition.externalParameters.workflow.ref')
+        
+        echo "Validating repository: $REPO_FROM_ATTESTATION"
+        echo "Validating workflow: $WORKFLOW_FROM_ATTESTATION"
+        echo "Validating ref: $REF_FROM_ATTESTATION"
+        
+        # Validate repository matches
+        if [[ "$REPO_FROM_ATTESTATION" == "${{ github.repository }}" ]]; then
+          echo "✅ Repository validation PASSED"
+        else
+          echo "❌ Repository validation FAILED: Expected ${{ github.repository }}, got $REPO_FROM_ATTESTATION"
+          exit 1
+        fi
+        
+        # Validate workflow path
+        if [[ "$WORKFLOW_FROM_ATTESTATION" == *"build-and-verify-attestation.yml"* ]]; then
+          echo "✅ Workflow validation PASSED"
+        else
+          echo "❌ Workflow validation FAILED: Unexpected workflow $WORKFLOW_FROM_ATTESTATION"
+          exit 1
+        fi
+        
+        # Validate ref matches current context
+        EXPECTED_REF="refs/heads/${{ github.ref_name }}"
+        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+          EXPECTED_REF="refs/pull/${{ github.event.number }}/merge"
+        fi
+        
+        echo "Expected ref: $EXPECTED_REF"
+        if [[ "$REF_FROM_ATTESTATION" == "$EXPECTED_REF" ]] || [[ "$REF_FROM_ATTESTATION" == "${{ github.ref }}" ]]; then
+          echo "✅ Ref validation PASSED"
+        else
+          echo "⚠️  Ref validation WARNING: Expected $EXPECTED_REF, got $REF_FROM_ATTESTATION"
+          # Don't fail on ref mismatch as it can vary in different contexts
+        fi
+        
+    - name: Upload attestation details
+      uses: actions/upload-artifact@v4
+      with:
+        name: attestation-verification-results
+        path: attestation-details.json
+        retention-days: 30
+        
+    - name: Summary
+      run: |
+        echo "🎉 Attestation verification workflow completed successfully!"
+        echo ""
+        echo "📊 Summary:"
+        echo "- Artifact: ${{ needs.build-and-attest.outputs.artifact-name }}"
+        echo "- Repository: ${{ github.repository }}"
+        echo "- Commit: ${{ github.sha }}"
+        echo "- Workflow: ${{ github.workflow }}"
+        echo "- Run ID: ${{ github.run_id }}"
+        echo ""
+        echo "✅ All attestation validations passed!"
