@@ -130,11 +130,14 @@ jobs:
         ARTIFACT_FILE="${{ needs.build-and-attest.outputs.artifact-name }}"
         
         # Extract key information from attestation
-        REPO_FROM_ATTESTATION=$(cat attestation-details.json | jq -r '.[0].verificationResult.statement.predicate.buildDefinition.externalParameters.workflow.repository')
+        REPO_URL_FROM_ATTESTATION=$(cat attestation-details.json | jq -r '.[0].verificationResult.statement.predicate.buildDefinition.externalParameters.workflow.repository')
         WORKFLOW_FROM_ATTESTATION=$(cat attestation-details.json | jq -r '.[0].verificationResult.statement.predicate.buildDefinition.externalParameters.workflow.path')
         REF_FROM_ATTESTATION=$(cat attestation-details.json | jq -r '.[0].verificationResult.statement.predicate.buildDefinition.externalParameters.workflow.ref')
         
-        echo "Validating repository: $REPO_FROM_ATTESTATION"
+        # Extract repository name from URL (remove https://github.com/ prefix)
+        REPO_FROM_ATTESTATION="${REPO_URL_FROM_ATTESTATION#https://github.com/}"
+        
+        echo "Validating repository: $REPO_FROM_ATTESTATION (from URL: $REPO_URL_FROM_ATTESTATION)"
         echo "Validating workflow: $WORKFLOW_FROM_ATTESTATION"
         echo "Validating ref: $REF_FROM_ATTESTATION"
         
