@@ -130,9 +130,9 @@ jobs:
         ARTIFACT_FILE="${{ needs.build-and-attest.outputs.artifact-name }}"
         
         # Extract key information from attestation
-        REPO_FROM_ATTESTATION=$(cat attestation-details.json | jq -r '.verificationResult.statement.predicate.buildDefinition.externalParameters.workflow.repository')
-        WORKFLOW_FROM_ATTESTATION=$(cat attestation-details.json | jq -r '.verificationResult.statement.predicate.buildDefinition.externalParameters.workflow.path')
-        REF_FROM_ATTESTATION=$(cat attestation-details.json | jq -r '.verificationResult.statement.predicate.buildDefinition.externalParameters.workflow.ref')
+        REPO_FROM_ATTESTATION=$(cat attestation-details.json | jq -r '.[0].verificationResult.statement.predicate.buildDefinition.externalParameters.workflow.repository')
+        WORKFLOW_FROM_ATTESTATION=$(cat attestation-details.json | jq -r '.[0].verificationResult.statement.predicate.buildDefinition.externalParameters.workflow.path')
+        REF_FROM_ATTESTATION=$(cat attestation-details.json | jq -r '.[0].verificationResult.statement.predicate.buildDefinition.externalParameters.workflow.ref')
         
         echo "Validating repository: $REPO_FROM_ATTESTATION"
         echo "Validating workflow: $WORKFLOW_FROM_ATTESTATION"
@@ -187,3 +187,40 @@ jobs:
         echo "- Run ID: ${{ github.run_id }}"
         echo ""
         echo "✅ All attestation validations passed!"
+        
+        # Extract attestation values for summary
+        REPO_FROM_ATTESTATION=$(cat attestation-details.json | jq -r '.[0].verificationResult.statement.predicate.buildDefinition.externalParameters.workflow.repository')
+        WORKFLOW_FROM_ATTESTATION=$(cat attestation-details.json | jq -r '.[0].verificationResult.statement.predicate.buildDefinition.externalParameters.workflow.path')
+        REF_FROM_ATTESTATION=$(cat attestation-details.json | jq -r '.[0].verificationResult.statement.predicate.buildDefinition.externalParameters.workflow.ref')
+        
+        # Write to job summary
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        # 🎉 Attestation Verification Complete
+        
+        ## 📊 Summary
+        
+        | Field | Value |
+        |-------|-------|
+        | **Artifact** | \`${{ needs.build-and-attest.outputs.artifact-name }}\` |
+        | **Repository** | \`${{ github.repository }}\` |
+        | **Commit** | \`${{ github.sha }}\` |
+        | **Workflow** | \`${{ github.workflow }}\` |
+        | **Run ID** | \`${{ github.run_id }}\` |
+        | **Date** | \`$(date -u +"%Y-%m-%d %H:%M:%S UTC")\` |
+        
+        ## ✅ Validation Results
+        
+        All attestation validations passed successfully:
+        
+        - ✅ **Repository validation** - Expected: \`${{ github.repository }}\`, Actual: \`${REPO_FROM_ATTESTATION}\`
+        - ✅ **Workflow validation** - Workflow: \`${WORKFLOW_FROM_ATTESTATION}\`
+        - ✅ **Reference validation** - Reference: \`${REF_FROM_ATTESTATION}\`
+        - ✅ **Artifact integrity** - Build artifact attestation verified
+        
+        The build artifact has been successfully verified with cryptographic attestations proving its authenticity and integrity.
+        
+        ## 🔗 Links
+        
+        - [Workflow Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+        - [Commit](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+        EOF
