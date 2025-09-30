@@ -1,0 +1,59 @@
+name: Build and Attest
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+# Required for attestations
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+jobs:
+  build-and-attest:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Run tests
+      run: npm test --if-present
+      
+    - name: Build package
+      run: npm pack
+      
+    - name: List built artifacts
+      run: ls -la *.tgz
+      
+    - name: Generate attestation
+      uses: actions/attest-build-provenance@v1
+      with:
+        subject-path: '*.tgz'
+        
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: npm-package
+        path: '*.tgz'
+        
+    # Optional: Push to registry with attestation
+    #- name: Publish to npm (if main branch)
+    #  if: github.ref == 'refs/heads/main'
+    #  run: |
+    #    echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
+    #    npm publish *.tgz
+    #  env:
+    #    NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
