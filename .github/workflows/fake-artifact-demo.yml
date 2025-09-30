@@ -1,0 +1,59 @@
+name: Demo - Fake Artifact Detection
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+jobs:
+  create-fake-artifact:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Create fake artifact
+      run: |
+        echo "🎭 Creating FAKE artifact to demonstrate verification failure..."
+        
+        # Create a fake package.json
+        cat > package.json << EOF
+        {
+          "name": "fake-malicious-package",
+          "version": "999.999.999",
+          "description": "This is a fake package for demo purposes",
+          "main": "malicious.js"
+        }
+        EOF
+        
+        # Create fake malicious content
+        cat > malicious.js << EOF
+        console.log("This is a fake/malicious package!");
+        // This would be malicious code in a real attack
+        process.env.SECRET_TOKEN && console.log("Stealing:", process.env.SECRET_TOKEN);
+        EOF
+        
+        # Pack the fake package
+        npm pack
+        
+        # Show what we created
+        echo "📋 Fake artifact created:"
+        ls -la *.tgz
+        
+    - name: Try to verify fake artifact (should FAIL)
+      run: |
+        echo "🔐 Attempting to verify FAKE artifact (should FAIL)..."
+        FAKE_ARTIFACT=$(ls *.tgz | head -1)
+        
+        echo "Attempting to verify: $FAKE_ARTIFACT"
+        
+        if gh attestation verify "$FAKE_ARTIFACT" --repo "${{ github.repository }}"; then
+          echo "❌ SECURITY ALERT: Fake artifact verification PASSED (this should not happen!)"
+          exit 1
+        else
+          echo "✅ Fake artifact verification FAILED (as expected - no valid attestation!)"
+          echo "🛡️  Attestation system successfully rejected unattested artifact!"
+        fi
+      env:
+        GH_TOKEN: ${{ github.token }}
